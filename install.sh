@@ -1,11 +1,21 @@
 #!/bin/bash
-# A script for install and config ldap
+# 安装和配置openldap
+# 操作系统: CentOS 7.2
 
-# password=ldapiswonderful
-ADMIN_PASSWORD="{SSHA}/xcP8pe3umm4UmGc185cU0yui3rYJ+AF"
-DC_FIRST="weiyu"
-DC="dc=weiyu,dc=com"
+# 管理员密码
+root_password="ldapiswonderful"
+dc_root="com"
+dc_leaf="weiyu"
+dc="dc=weiyu,dc=com"
 
+# DC_FIRST="weiyu"
+# DC="dc=weiyu,dc=com"
+# ADMIN_PASSWORD="{SSHA}/xcP8pe3umm4UmGc185cU0yui3rYJ+AF"
+
+# Gengrate root password
+root_password_ssha=`slappasswd -s "${root_password}"`
+
+# Install packages and start service
 yum install openldap-servers openldap-clients openldap git -y
 if [ ! -f /var/lib/ldap/DB_CONFIG ]; then
     cp /usr/share/openldap-servers/DB_CONFIG.example /var/lib/ldap/DB_CONFIG
@@ -13,80 +23,80 @@ fi
 systemctl restart slapd
 systemctl enable slapd
 
-# set root password
+# Set root password
 echo "
 dn: olcDatabase={0}config,cn=config
 changetype: modify
 add: olcRootPW
-olcRootPW: ${ADMIN_PASSWORD}
+olcRootPW: ${root_password_ssha}
 " > chrootpw.ldif
 ldapadd -Y EXTERNAL -H ldapi:/// -f chrootpw.ldif
 
-# import schema
+# import basic schema
 ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/cosine.ldif
 ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/nis.ldif
 ldapadd -Y EXTERNAL -H ldapi:/// -f /etc/openldap/schema/inetorgperson.ldif
 
-# set privilege
+# Set root privilege
 echo "
 dn: olcDatabase={1}monitor,cn=config
 changetype: modify
 replace: olcAccess
 olcAccess: {0}to * by dn.base="gidNumber=0+uidNumber=0,cn=peercred,cn=external,cn=auth"
-  read by dn.base="cn=Manager,${DC}" read by * none
+  read by dn.base="cn=root,${dc}" read by * none
 
 dn: olcDatabase={2}hdb,cn=config
 changetype: modify
 replace: olcSuffix
-olcSuffix: ${DC}
+olcSuffix: ${dc}
 
 dn: olcDatabase={2}hdb,cn=config
 changetype: modify
 replace: olcRootDN
-olcRootDN: cn=Manager,${DC}
+olcRootDN: cn=root,${dc}
 
 dn: olcDatabase={2}hdb,cn=config
 changetype: modify
 add: olcRootPW
-olcRootPW: "$ADMIN_PASSWORD"
+olcRootPW: "${root_password_ssha}"
 
 dn: olcDatabase={2}hdb,cn=config
 changetype: modify
 add: olcAccess
 olcAccess: {0}to attrs=userPassword,shadowLastChange by
-  dn="cn=Manager,${DC}" write by anonymous auth by self write by * none
+  dn="cn=root,${dc}" write by anonymous auth by self write by * none
 olcAccess: {1}to dn.base="" by * read
-olcAccess: {2}to * by dn="cn=Manager,${DC}" write by * read
-" >  chdomain.ldif
-ldapmodify -Y EXTERNAL -H ldapi:/// -f chdomain.ldif
+olcAccess: {2}to * by dn="cn=root,${dc}" write by * read
+" >  set_privilege.ldif
+ldapmodify -Y EXTERNAL -H ldapi:/// -f set_privilege.ldif
 
-# create ou
+# create dc and ou
 echo "
-dn: ${DC}
+dn: ${dc}
 objectClass: top
 objectClass: dcObject
 objectclass: organization
 o: base ou
-dc: ${DC_FIRST}
+dc: ${dc_leaf}
 
-dn: cn=Manager,${DC}
+dn: cn=root,${dc}
 objectClass: organizationalRole
 cn: Manager
-description: Directory Manager
+description: Directory Root
 
-dn: ou=People,${DC}
+dn: ou=People,${dc}
 objectClass: organizationalUnit
 ou: People
 
-dn: ou=Group,${DC}
+dn: ou=Group,${dc}
 objectClass: organizationalUnit
 ou: Group
 " > basedomain.ldif
-ldapadd -x -D cn=Manager,dc=weiyu,dc=com -W -f basedomain.ldif
+ldapadd -x -D "cn=root,${dc}" -w "${root_password}" -f basedomain.ldif
 
 # create user and group
 echo "
-dn: uid=test,ou=People,${DC}
+dn: uid=test,ou=People,${dc}
 objectClass: inetOrgPerson
 objectClass: posixAccount
 objectClass: shadowAccount
@@ -102,15 +112,16 @@ loginShell: /bin/bash
 gecos: test
 userPassword: {SASL}test@ci
 description: User account
-mail: weiyu@unitedstack.com
+mail: test@gmail.com
 
-dn: cn=devops,ou=Group,${DC}
+dn: cn=devops,ou=Group,${dc}
 objectClass: posixGroup
 gidNumber: 5002
 cn: devops
-" > group.ldif
-ldapadd -x -D cn=Manager,dc=weiyu,dc=com -W -f group.ldif
+" > user_group.ldif
+ldapadd -x -D "cn=root,${dc}" -w "${root_password}" -f user_group.ldif
 
+# Config ldap use sasl
 echo "
 pwcheck_method: saslauthd
 mech_list: plain login
