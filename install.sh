@@ -1,5 +1,5 @@
 #!/bin/bash
-# 安装和配置openldap
+# 安装和配置openldap+sasl+google_authenticator
 # 操作系统: CentOS 7.2
 
 # 管理员密码
@@ -8,12 +8,49 @@ dc_root="com"
 dc_leaf="weiyu"
 dc="dc=weiyu,dc=com"
 
-# DC_FIRST="weiyu"
-# DC="dc=weiyu,dc=com"
-# ADMIN_PASSWORD="{SSHA}/xcP8pe3umm4UmGc185cU0yui3rYJ+AF"
-
 # Gengrate root password
 root_password_ssha=`slappasswd -s "${root_password}"`
+
+# Build and install pam_google_authenticator module
+if [ ! -e /usr/local/lib/security/pam_google_authenticator.so ]; then
+    git clone https://github.com/google/google-authenticator.git
+    cd google-authenticator/libpam
+    ./bootstrap.sh
+    ./configure
+    make && sudo make install
+fi
+if [ ! -e /usr/local/lib/security/pam_google_authenticator.so ]; then
+    echo "google_authenticator module build failed!"
+    exit 1
+fi
+
+# Config and install cyrus-sasl
+yum  -y install cyrus-sasl-plain cyrus-sasl-lib cyrus-sasl-devel cyrus-sasl oathtool
+
+echo "
+SOCKETDIR=/run/saslauthd
+MECH=pam
+FLAGS=
+" > /etc/sysconfig/saslauthd
+
+echo "
+auth required /usr/local/lib/security/pam_google_authenticator.so forward_pass
+auth required pam_unix.so use_first_pass
+account include password-auth
+" > /etc/pam.d/ldap
+
+systemctl start saslauthd
+systemctl enable saslauthd
+
+# Check sasl config
+adduser test -p test
+su test -c "google-authenticator -t -d -f -r 1 -R 15 -w 3"
+test_key=`cat /home/test/.google_authenticator  | head -1`
+code=`oathtool --totp --base32 -d6 "${test_key}"` && testsaslauthd  -s ldap  -u test -p "test${code}"
+if [ $? != 0 ]; then
+    echo "testsaslauthd failed!"
+    exit
+fi
 
 # Install packages and start service
 yum install openldap-servers openldap-clients openldap git -y
