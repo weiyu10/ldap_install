@@ -1,12 +1,20 @@
 #!/bin/bash
-# 安装和配置openldap+sasl+google_authenticator
-# 操作系统: CentOS 7.2
+# Install and config openldap+sasl+google_authenticator
+# OS; CentOS 7.2
 
-# 管理员密码
-root_password="ldapiswonderful"
-dc_root="com"
-dc_leaf="weiyu"
-dc="dc=weiyu,dc=com"
+export LC_ALL=C
+export LANG=C
+export PATH=$PATH:/usr/local/bin
+setenforce 0
+
+SOURCE ./config
+
+# Config and install cyrus-sasl
+yum -y install epel-release-7-6.noarch
+yum  -y install cyrus-sasl-plain cyrus-sasl-lib cyrus-sasl-devel \
+                cyrus-sasl oathtool gcc autoconf openldap-servers \
+                openldap-devel openldap-client automake pam-devel \
+                libtool-ltdl libtool
 
 # Gengrate root password
 root_password_ssha=`slappasswd -s "${root_password}"`
@@ -24,9 +32,6 @@ if [ ! -e /usr/local/lib/security/pam_google_authenticator.so ]; then
     exit 1
 fi
 
-# Config and install cyrus-sasl
-yum  -y install cyrus-sasl-plain cyrus-sasl-lib cyrus-sasl-devel cyrus-sasl oathtool
-
 echo "
 SOCKETDIR=/run/saslauthd
 MECH=pam
@@ -42,8 +47,13 @@ account include password-auth
 systemctl start saslauthd
 systemctl enable saslauthd
 
+# debug pam
+touch /etc/pam_debug
+echo '*.debug /var/log/auth.log' > /etc/rsyslog.d/pam.conf
+systemctl restart rsyslog
+
 # Check sasl config
-adduser test -p test
+adduser test -p '$6$oX3U2JJF$HKcfCIn7A3u9y3VB3RBG2OQ437rV2hITMRBTIXxrvPc3qgPzhwggZabwtVahoCCmBGJoXyjVnR5TBfQDgP79B1'
 su test -c "google-authenticator -t -d -f -r 1 -R 15 -w 3"
 test_key=`cat /home/test/.google_authenticator  | head -1`
 code=`oathtool --totp --base32 -d6 "${test_key}"` && testsaslauthd  -s ldap  -u test -p "test${code}"

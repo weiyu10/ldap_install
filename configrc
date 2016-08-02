@@ -1,0 +1,4 @@
+root_password="ldapiswonderful"
+dc_root="com"
+dc_leaf="weiyu"
+dc="dc=weiyu,dc=com"
